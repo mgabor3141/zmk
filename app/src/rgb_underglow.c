@@ -540,6 +540,594 @@ static void zmk_rgb_underglow_save_state_work(struct k_work *_work) {
 static struct k_work_delayable underglow_save_work;
 #endif
 
+/* ------------------------------------------------------------------ */
+/* Go60 startup animation                                             */
+/* ------------------------------------------------------------------ */
+
+static uint32_t anim_rng_state;
+static uint32_t anim_rand(void) {
+    anim_rng_state ^= anim_rng_state << 13;
+    anim_rng_state ^= anim_rng_state >> 17;
+    anim_rng_state ^= anim_rng_state << 5;
+    return anim_rng_state;
+}
+/* 0..65535 mapped to 0..255 */
+static uint8_t anim_randf_byte(void) { return (uint8_t)(anim_rand() >> 24); }
+
+
+
+#if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
+
+/*
+ * Go60 startup animation: 3D particle rain + face logo.
+ *
+ * Both halves: sparse cyan particles fall with gravity through the key grid.
+ * Particles have three depth layers (front/mid/back) giving the illusion of
+ * depth via brightness and speed differences.
+ *
+ * Right half only: after the rain, a "journey pixel" falls down C1, swings
+ * around the bottom row, rises up C3, then settles into R2C2 (the eye).
+ * The surrounding logo fades in as white pixels.
+ *
+ * Logo (RH C1-C4, R1-R4):
+ *   WHT WHT WHT BLK
+ *   WHT CYN WHT BLK
+ *   WHT WHT WHT WHT
+ *   WHT WHT WHT BLK
+ */
+
+/* --- Fixed point 8.8 helpers --- */
+#define FP8           8
+#define FP(x)         ((int16_t)((x) * (1 << FP8)))  /* float literal to fp */
+#define FP_INT(x)     ((x) >> FP8)                    /* fp to integer */
+#define FP_ABS(x)     ((x) < 0 ? -(x) : (x))
+/* Multiply: keep full precision */
+#define FP_MUL(a, b)  ((int16_t)(((int32_t)(a) * (b)) >> FP8))
+/* Decay a uint8_t: val * (n/256), e.g. n=171 for 0.67 */
+#define DECAY8(v, n)  ((uint8_t)(((uint16_t)(v) * (n)) >> 8))
+
+/* --- Per-half key layout tables --- */
+
+struct rain_key {
+    uint8_t col;     /* 0-5 */
+    uint8_t row;     /* 0-5, index into key_buf */
+    int16_t y_fp;    /* virtual y in fixed point (rows 0-3=main, 4=R5/T1) */
+    uint8_t key_pos; /* ZMK key position for inverse lookup */
+};
+
+/*
+ * Physical column layout (left to right on the PCB):
+ *   LH: C6(col0) C5(col1) C4(col2) C3(col3) C2(col4) C1(col5)
+ *   RH: C1(col0) C2(col1) C3(col2) C4(col3) C5(col4) C6(col5)
+ */
+#if defined(CONFIG_BOARD_GO60_LH)
+static const struct rain_key rain_keys[] = {
+    /* Main grid: 4 rows x 6 cols */
+    {0,0,FP(0),0},  {1,0,FP(0),1},  {2,0,FP(0),2},  {3,0,FP(0),3},  {4,0,FP(0),4},  {5,0,FP(0),5},
+    {0,1,FP(1),12}, {1,1,FP(1),13}, {2,1,FP(1),14}, {3,1,FP(1),15}, {4,1,FP(1),16}, {5,1,FP(1),17},
+    {0,2,FP(2),24}, {1,2,FP(2),25}, {2,2,FP(2),26}, {3,2,FP(2),27}, {4,2,FP(2),28}, {5,2,FP(2),29},
+    {0,3,FP(3),36}, {1,3,FP(3),37}, {2,3,FP(3),38}, {3,3,FP(3),39}, {4,3,FP(3),40}, {5,3,FP(3),41},
+    /* R5: C4=col2, C3=col3, C2=col4 */
+    {2,4,FP(4),48}, {3,4,FP(4),49}, {4,4,FP(4),50},
+    /* T1: C1=col5 */
+    {5,5,FP(4),54},
+};
+#define NUM_RAIN_COLS  6
+static const uint8_t rain_cols[] = {0, 1, 2, 3, 4, 5};
+#else /* CONFIG_BOARD_GO60_RH */
+static const struct rain_key rain_keys[] = {
+    /* Main grid: 4 rows x 6 cols */
+    {0,0,FP(0),6},  {1,0,FP(0),7},  {2,0,FP(0),8},  {3,0,FP(0),9},  {4,0,FP(0),10}, {5,0,FP(0),11},
+    {0,1,FP(1),18}, {1,1,FP(1),19}, {2,1,FP(1),20}, {3,1,FP(1),21}, {4,1,FP(1),22}, {5,1,FP(1),23},
+    {0,2,FP(2),30}, {1,2,FP(2),31}, {2,2,FP(2),32}, {3,2,FP(2),33}, {4,2,FP(2),34}, {5,2,FP(2),35},
+    {0,3,FP(3),42}, {1,3,FP(3),43}, {2,3,FP(3),44}, {3,3,FP(3),45}, {4,3,FP(3),46}, {5,3,FP(3),47},
+    /* R5: C2=col1, C3=col2, C4=col3 */
+    {1,4,FP(4),51}, {2,4,FP(4),52}, {3,4,FP(4),53},
+    /* T1 (innermost thumb, physically pos 59 after pixel-lookup fix) */
+    {0,5,FP(4),59},
+};
+/* RH excludes col3 (C4, black keycap column) from rain */
+#define NUM_RAIN_COLS  5
+static const uint8_t rain_cols[] = {0, 1, 2, 4, 5};
+#endif
+
+#define NUM_RAIN_KEYS  (sizeof(rain_keys) / sizeof(rain_keys[0]))
+
+/* Does this column have keys at virtual y=4? (R5 or T1) */
+static bool col_has_y4(uint8_t col) {
+    for (int i = 0; i < (int)NUM_RAIN_KEYS; i++) {
+        if (rain_keys[i].col == col && FP_INT(rain_keys[i].y_fp) == 4)
+            return true;
+    }
+    return false;
+}
+
+/* --- Rain particle --- */
+
+#define MAX_PARTICLES 24
+#define FRAME_MS      25
+
+/* Depth layers: front (75%), mid (12.5%), back (12.5%) */
+struct depth_layer {
+    int16_t z_fp;     /* depth: affects gravity and speed */
+    uint8_t bright;   /* max brightness */
+};
+static const struct depth_layer layers[] = {
+    { FP(1),    255 },  /* front */
+    { FP(0.55), 160 },  /* mid */
+    { FP(0.25),  90 },  /* back */
+};
+/* Round-robin pattern: 6 front, 1 mid, 1 back */
+static const uint8_t layer_pattern[] = {0, 0, 0, 0, 0, 0, 1, 2};
+#define LAYER_PATTERN_LEN 8
+
+struct particle {
+    int16_t y_fp;       /* vertical position, fixed point */
+    int16_t vy_fp;      /* vertical velocity, fixed point */
+    int16_t z_fp;       /* depth (affects gravity scaling) */
+    uint8_t col;        /* column index */
+    uint8_t bright;     /* max brightness */
+    uint8_t max_y;      /* 3 or 4 depending on column */
+    uint8_t alive;
+};
+
+/* --- Animation tuning constants (matching JS prototype) --- */
+#define SPAWN_RATE_FP   FP(0.13)    /* particles per frame */
+#define GRAVITY_FP      FP(0.020)   /* rows/frame^2 */
+#define PROXIMITY_FP    FP(0.60)    /* key activation radius */
+#define DECAY_NUM       171         /* 171/256 = 0.668 */
+#define TRAIL_DECAY_NUM 141         /* 141/256 = 0.551 */
+#define HEAT_SELF_FP    FP(1.0)
+#define HEAT_NEIGH_FP   FP(0.5)
+#define HEAT_DECAY_NUM  230         /* 230/256 = 0.898 */
+
+/* Timeline frames */
+#define RAMP_END    10
+#define FULL_END    60
+#define STOP_BACK   70
+#define STOP_MID    80
+#define JOURNEY_START 95
+
+/* --- Per-key RGB buffer --- */
+struct key_rgb {
+    uint8_t r, g, b;
+};
+
+static void decay_key_buf(struct key_rgb buf[][6], int rows, uint8_t factor) {
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < 6; c++) {
+            buf[r][c].r = DECAY8(buf[r][c].r, factor);
+            buf[r][c].g = DECAY8(buf[r][c].g, factor);
+            buf[r][c].b = DECAY8(buf[r][c].b, factor);
+        }
+}
+
+static void flush_key_buf(struct key_rgb buf[][6], const int8_t *key_to_led) {
+    memset(pixels, 0, sizeof(struct led_rgb) * STRIP_NUM_PIXELS);
+    for (int i = 0; i < (int)NUM_RAIN_KEYS; i++) {
+        int led = key_to_led[rain_keys[i].key_pos];
+        if (led >= 0) {
+            uint8_t row = rain_keys[i].row;
+            uint8_t col = rain_keys[i].col;
+            pixels[led].r = buf[row][col].r;
+            pixels[led].g = buf[row][col].g;
+            pixels[led].b = buf[row][col].b;
+        }
+    }
+    led_strip_update_rgb(led_strip, pixels, STRIP_NUM_PIXELS);
+}
+
+/* --- Heat map for column selection --- */
+
+static bool cols_are_neighbors(uint8_t a, uint8_t b) {
+    /* Columns are neighbors only if both are in rain_cols and adjacent */
+    bool a_found = false, b_found = false;
+    for (int i = 0; i < NUM_RAIN_COLS; i++) {
+        if (rain_cols[i] == a) a_found = true;
+        if (rain_cols[i] == b) b_found = true;
+    }
+    if (!a_found || !b_found) return false;
+    return (a == b + 1) || (b == a + 1);
+}
+
+/* --- Main animation --- */
+
+static void startup_anim_handler(void *p1, void *p2, void *p3) {
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+    ext_power_enable(ext_power);
+    k_msleep(100);
+#endif
+
+    /* Build inverse lookup: key position -> LED index */
+    int8_t key_to_led[60];
+    memset(key_to_led, -1, sizeof(key_to_led));
+    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
+        int pos = rgb_pixel_lookup(i);
+        if (pos >= 0 && pos < 60)
+            key_to_led[pos] = (int8_t)i;
+    }
+
+    anim_rng_state = k_uptime_get_32() ^ 0xFA4CE;
+    memset(pixels, 0, sizeof(struct led_rgb) * STRIP_NUM_PIXELS);
+
+    struct key_rgb key_buf[6][6];  /* rows 0-5, cols 0-5 */
+    memset(key_buf, 0, sizeof(key_buf));
+
+    struct particle parts[MAX_PARTICLES];
+    int n_parts = 0;
+
+    int16_t heat[6] = {0};
+    int16_t spawn_accum = 0;
+    uint8_t layer_iter = 0;
+
+#if defined(CONFIG_BOARD_GO60_RH)
+    /* Journey pixel state */
+    int16_t j_y_fp = 0, j_vy_fp = FP(0.04);
+    int j_seg = 0;
+    bool journey_active = false;
+    bool journey_phys_done = false;
+#endif
+
+#if defined(CONFIG_BOARD_GO60_RH)
+    /* Journey path: physics-driven portion (fall, swing, rise) */
+    static const struct { uint8_t row; uint8_t col; int16_t y_fp; } j_path[] = {
+        {0, 0, FP(0)},  /* R1C1 */
+        {1, 0, FP(1)},  /* R2C1 */
+        {2, 0, FP(2)},  /* R3C1 */
+        {3, 0, FP(3)},  /* R4C1 */
+        {5, 0, FP(4)},  /* T1 */
+        {4, 1, FP(4)},  /* R5C2 */
+        {4, 2, FP(4)},  /* R5C3 */
+        {3, 2, FP(3)},  /* R4C3 */
+        {2, 2, FP(2)},  /* R3C3 */
+        {1, 2, FP(1)},  /* R2C3 */
+        {0, 2, FP(0)},  /* R1C3 - apex */
+    };
+    #define J_PATH_LEN (sizeof(j_path) / sizeof(j_path[0]))
+    #define J_GRAV_FP  FP(0.025)
+
+    /* Keyframe landing: {row, col, hold_frames} */
+    static const struct { uint8_t row; uint8_t col; uint8_t frames; } j_landing[] = {
+        {0, 2, 8},   /* R1C3 - pause at apex */
+        {0, 1, 6},   /* R1C2 - drift */
+        {1, 1, 1},   /* R2C2 - eye */
+    };
+    #define J_LANDING_LEN (sizeof(j_landing) / sizeof(j_landing[0]))
+
+
+#endif
+
+    /* ---- Main frame loop ---- */
+    int frame = 0;
+    bool spawning = true;
+
+    while (1) {
+        /* Determine spawn parameters based on timeline */
+        int16_t spawn_rate = SPAWN_RATE_FP;
+        int16_t min_z = 0;
+
+        if (frame < RAMP_END) {
+            spawn_rate = (int16_t)((int32_t)SPAWN_RATE_FP * frame / RAMP_END);
+        } else if (frame < FULL_END) {
+            /* full rate, all layers */
+        } else if (frame < STOP_BACK) {
+            min_z = layers[2].z_fp + 1;  /* exclude back */
+        } else if (frame < STOP_MID) {
+            min_z = layers[1].z_fp + 1;  /* exclude back + mid */
+        } else {
+            spawning = false;
+        }
+
+#if defined(CONFIG_BOARD_GO60_RH)
+        /* Exclude cols 0-2 on RH near journey start */
+        bool exclude_inner = (frame >= STOP_BACK);
+
+        /* Start journey pixel */
+        if (frame == JOURNEY_START && !journey_active) {
+            journey_active = true;
+            j_y_fp = 0;
+            j_vy_fp = FP(0.04);
+            j_seg = 0;
+            journey_phys_done = false;
+        }
+#endif
+
+        /* Decay key buffer */
+        decay_key_buf(key_buf, 6, DECAY_NUM);
+
+        /* Decay heat */
+        for (int c = 0; c < 6; c++)
+            heat[c] = DECAY8(heat[c], HEAT_DECAY_NUM);
+
+        /* Spawn particles */
+        if (spawning) {
+            /* Scale rate by column count / 6 */
+            int16_t adj_rate = (int16_t)((int32_t)spawn_rate * NUM_RAIN_COLS / 6);
+            /* Jitter: +/- 30% */
+            int16_t jitter = (int16_t)((int32_t)adj_rate * ((int8_t)(anim_randf_byte() - 128)) * 3 / 512);
+            spawn_accum += adj_rate + jitter;
+
+            while (spawn_accum >= FP(1) && n_parts < MAX_PARTICLES) {
+                spawn_accum -= FP(1);
+
+                /* Pick column via heat-weighted selection */
+                int16_t weights[6];
+                int32_t total = 0;
+                for (int i = 0; i < NUM_RAIN_COLS; i++) {
+                    uint8_t c = rain_cols[i];
+#if defined(CONFIG_BOARD_GO60_RH)
+                    if (exclude_inner && c <= 2) {
+                        weights[i] = 0;
+                        continue;
+                    }
+#endif
+                    weights[i] = (int16_t)(FP(1) / (FP(1) + FP_MUL(heat[c], FP(3))) + 1);
+                    total += weights[i];
+                }
+                if (total == 0) break;
+
+                int32_t r = (int32_t)(anim_rand() & 0xFFFF) * total >> 16;
+                uint8_t col = rain_cols[0];
+                for (int i = 0; i < NUM_RAIN_COLS; i++) {
+                    r -= weights[i];
+                    if (r <= 0) {
+                        col = rain_cols[i];
+                        break;
+                    }
+                }
+
+                /* Apply heat */
+                heat[col] = (heat[col] + HEAT_SELF_FP > 32767) ? 32767 : heat[col] + HEAT_SELF_FP;
+                for (int c = 0; c < 6; c++) {
+                    if (c != col && cols_are_neighbors(c, col))
+                        heat[c] = (heat[c] + HEAT_NEIGH_FP > 32767) ? 32767 : heat[c] + HEAT_NEIGH_FP;
+                }
+
+                /* Pick layer (round-robin) */
+                const struct depth_layer *layer;
+                bool found = false;
+                for (int attempt = 0; attempt < LAYER_PATTERN_LEN; attempt++) {
+                    layer = &layers[layer_pattern[layer_iter % LAYER_PATTERN_LEN]];
+                    layer_iter++;
+                    if (layer->z_fp >= min_z) { found = true; break; }
+                }
+                if (!found) continue;
+
+                /* Create particle */
+                struct particle *p = &parts[n_parts++];
+                p->col = col;
+                p->z_fp = layer->z_fp;
+                p->bright = layer->bright;
+                int16_t start_offset = (int16_t)(-(anim_rand() % 384) - 128); /* -0.5 to -2.0 */
+                p->y_fp = start_offset;
+                p->vy_fp = FP(0.01) + FP_MUL(p->z_fp, FP(0.02));
+                p->max_y = col_has_y4(col) ? 4 : 3;
+                p->alive = 1;
+            }
+        }
+
+        /* Update particles */
+        for (int i = 0; i < n_parts; i++) {
+            struct particle *p = &parts[i];
+            if (!p->alive) continue;
+
+            p->vy_fp += FP_MUL(GRAVITY_FP, p->z_fp);
+            p->y_fp += p->vy_fp;
+
+            if (p->y_fp > FP(p->max_y + 1) + FP(0.5)) {
+                p->alive = 0;
+                continue;
+            }
+
+            /* Light keys within proximity */
+            for (int k = 0; k < (int)NUM_RAIN_KEYS; k++) {
+                if (rain_keys[k].col != p->col) continue;
+                int16_t dist = FP_ABS(p->y_fp - rain_keys[k].y_fp);
+                if (dist < PROXIMITY_FP) {
+                    int intensity = (int)p->bright * (PROXIMITY_FP - dist) / PROXIMITY_FP;
+                    uint8_t row = rain_keys[k].row;
+                    uint8_t col = rain_keys[k].col;
+                    int g = key_buf[row][col].g + intensity;
+                    int b = key_buf[row][col].b + intensity;
+                    key_buf[row][col].g = g > 255 ? 255 : (uint8_t)g;
+                    key_buf[row][col].b = b > 255 ? 255 : (uint8_t)b;
+                }
+            }
+        }
+
+        /* Compact dead particles */
+        int write = 0;
+        for (int read = 0; read < n_parts; read++) {
+            if (parts[read].alive) {
+                if (write != read) parts[write] = parts[read];
+                write++;
+            }
+        }
+        n_parts = write;
+
+#if defined(CONFIG_BOARD_GO60_RH)
+        /* Journey pixel physics */
+        if (journey_active && !journey_phys_done) {
+            int seg = j_seg < (int)J_PATH_LEN - 1 ? j_seg : (int)J_PATH_LEN - 2;
+            int16_t dy = j_path[seg + 1].y_fp - j_path[seg].y_fp;
+
+            if (dy > 0) j_vy_fp += J_GRAV_FP;        /* falling */
+            else if (dy < 0) j_vy_fp -= J_GRAV_FP;   /* rising */
+            /* horizontal: maintain speed */
+
+            if (j_vy_fp <= 0) {
+                journey_phys_done = true;
+            } else {
+                j_y_fp += j_vy_fp;
+                j_seg = FP_INT(j_y_fp);
+                if (j_seg >= (int)J_PATH_LEN - 1) {
+                    j_seg = (int)J_PATH_LEN - 1;
+                    journey_phys_done = true;
+                }
+            }
+
+            /* Trail decay (faster than rain) */
+            decay_key_buf(key_buf, 6, TRAIL_DECAY_NUM);
+
+            /* Light nearest key */
+            int si = j_seg;
+            if (si >= (int)J_PATH_LEN) si = (int)J_PATH_LEN - 1;
+            key_buf[j_path[si].row][j_path[si].col] =
+                (struct key_rgb){.r = 0, .g = 255, .b = 255};
+        }
+#endif
+
+        /* Flush to LEDs */
+        flush_key_buf(key_buf, key_to_led);
+        k_msleep(FRAME_MS);
+        frame++;
+
+        /* Exit condition */
+        bool rain_done = !spawning && n_parts == 0;
+#if defined(CONFIG_BOARD_GO60_RH)
+        if (rain_done && journey_phys_done) break;
+#else
+        if (rain_done) break;
+#endif
+    }
+
+#if defined(CONFIG_BOARD_GO60_RH)
+    /* ---- Keyframe landing ---- */
+    for (int k = 0; k < (int)J_LANDING_LEN; k++) {
+        for (int f = 0; f < j_landing[k].frames; f++) {
+            decay_key_buf(key_buf, 6, TRAIL_DECAY_NUM);
+            key_buf[j_landing[k].row][j_landing[k].col] =
+                (struct key_rgb){.r = 0, .g = 255, .b = 255};
+            flush_key_buf(key_buf, key_to_led);
+            k_msleep(FRAME_MS);
+        }
+    }
+
+    /* Flash the eye */
+    for (int f = 0; f < 3; f++) {
+        key_buf[1][1] = (struct key_rgb){.r = 0, .g = 255, .b = 255};
+        flush_key_buf(key_buf, key_to_led);
+        k_msleep(40);
+        key_buf[1][1] = (struct key_rgb){.r = 0, .g = 180, .b = 180};
+        flush_key_buf(key_buf, key_to_led);
+        k_msleep(40);
+    }
+
+    /* ---- Ripple outward from eye within 4x4 face area ---- */
+    /* Keys grouped by Chebyshev distance from eye (row=1, col=1) */
+    static const uint8_t ring1[][2] = {
+        {0,0},{0,1},{0,2},{1,0},{1,2},{2,0},{2,1},{2,2},
+    };
+    static const uint8_t ring2[][2] = {
+        {0,3},{1,3},{2,3},{3,0},{3,1},{3,2},{3,3},
+    };
+    #define N_RING1 (sizeof(ring1) / sizeof(ring1[0]))
+    #define N_RING2 (sizeof(ring2) / sizeof(ring2[0]))
+
+    static const struct { const uint8_t (*keys)[2]; int count; } rings[] = {
+        { ring1, N_RING1 },
+        { ring2, N_RING2 },
+    };
+
+    for (int ring = 0; ring < 2; ring++) {
+        /* Fade in this ring (white at 75% = 192) */
+        for (int f = 0; f < 4; f++) {
+            decay_key_buf(key_buf, 6, 179);  /* 179/256 ~ 0.70 */
+            uint8_t bright = (uint8_t)((f + 1) * 48);  /* up to 192 */
+            for (int k = 0; k < rings[ring].count; k++) {
+                uint8_t r = rings[ring].keys[k][0];
+                uint8_t c = rings[ring].keys[k][1];
+                int rv = key_buf[r][c].r + bright;
+                int gv = key_buf[r][c].g + bright;
+                int bv = key_buf[r][c].b + bright;
+                key_buf[r][c].r = rv > 192 ? 192 : (uint8_t)rv;
+                key_buf[r][c].g = gv > 192 ? 192 : (uint8_t)gv;
+                key_buf[r][c].b = bv > 192 ? 192 : (uint8_t)bv;
+            }
+            key_buf[1][1] = (struct key_rgb){.r = 0, .g = 255, .b = 255};
+            flush_key_buf(key_buf, key_to_led);
+            k_msleep(FRAME_MS);
+        }
+        /* Let it decay */
+        for (int f = 0; f < 3; f++) {
+            decay_key_buf(key_buf, 6, 153);  /* 153/256 ~ 0.60 */
+            key_buf[1][1] = (struct key_rgb){.r = 0, .g = 255, .b = 255};
+            flush_key_buf(key_buf, key_to_led);
+            k_msleep(FRAME_MS);
+        }
+    }
+
+    /* Hold eye as ripple fades */
+    for (int f = 0; f < 15; f++) {
+        decay_key_buf(key_buf, 6, 179);
+        key_buf[1][1] = (struct key_rgb){.r = 0, .g = 255, .b = 255};
+        flush_key_buf(key_buf, key_to_led);
+        k_msleep(FRAME_MS);
+    }
+
+    /* Hold eye alone */
+    memset(key_buf, 0, sizeof(key_buf));
+    key_buf[1][1] = (struct key_rgb){.r = 0, .g = 255, .b = 255};
+    flush_key_buf(key_buf, key_to_led);
+    k_msleep(800);
+
+    /* Fade out eye */
+    for (int f = 0; f < 20; f++) {
+        key_buf[1][1].g = key_buf[1][1].g > 14 ? key_buf[1][1].g - 14 : 0;
+        key_buf[1][1].b = key_buf[1][1].b > 14 ? key_buf[1][1].b - 14 : 0;
+        flush_key_buf(key_buf, key_to_led);
+        k_msleep(FRAME_MS);
+    }
+#endif /* CONFIG_BOARD_GO60_RH */
+
+    memset(pixels, 0, sizeof(struct led_rgb) * STRIP_NUM_PIXELS);
+    led_strip_update_rgb(led_strip, pixels, STRIP_NUM_PIXELS);
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+    if (!state.on && !state.layer_enabled) {
+        ext_power_disable(ext_power);
+    }
+#endif
+}
+
+#else /* !UNDERGLOW_LAYER_ENABLED */
+
+/* Fallback: simple rainbow sweep when RGB layer not enabled */
+static void startup_anim_handler(void *p1, void *p2, void *p3) {
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+    ext_power_enable(ext_power);
+    k_msleep(100);
+#endif
+    int brt = CONFIG_ZMK_RGB_UNDERGLOW_BRT_MAX;
+    for (int frame = 0; frame < 40; frame++) {
+        for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
+            struct zmk_led_hsb hsb = {
+                .h = (HUE_MAX / STRIP_NUM_PIXELS * i + HUE_MAX * frame / 40) % HUE_MAX,
+                .s = 100,
+                .b = brt * (40 - frame) / 40,
+            };
+            pixels[i] = hsb_to_rgb(hsb_scale_zero_max(hsb));
+        }
+        led_strip_update_rgb(led_strip, pixels, STRIP_NUM_PIXELS);
+        k_msleep(25);
+    }
+    memset(pixels, 0, sizeof(struct led_rgb) * STRIP_NUM_PIXELS);
+    led_strip_update_rgb(led_strip, pixels, STRIP_NUM_PIXELS);
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+    if (!state.on && !state.layer_enabled) {
+        ext_power_disable(ext_power);
+    }
+#endif
+}
+
+#endif /* UNDERGLOW_LAYER_ENABLED */
+
+/* Dedicated thread for startup animation so it doesn't block the
+ * low-priority work queue (which ZMK uses for BLE/split init). */
+#define ANIM_STACK_SIZE 2048
+K_THREAD_STACK_DEFINE(anim_stack, ANIM_STACK_SIZE);
+static struct k_thread anim_thread_data;
+
 static int zmk_rgb_underglow_init(void) {
     led_strip = DEVICE_DT_GET(STRIP_CHOSEN);
 
@@ -578,6 +1166,13 @@ static int zmk_rgb_underglow_init(void) {
         zmk_rgb_underglow_set_layer(rgb_underglow_top_layer(), true);
     }
 #endif
+
+    // Kick off startup animation on the low-priority work queue
+    k_thread_create(&anim_thread_data, anim_stack, ANIM_STACK_SIZE,
+                    (k_thread_entry_t)startup_anim_handler,
+                    NULL, NULL, NULL,
+                    K_LOWEST_APPLICATION_THREAD_PRIO, 0, K_NO_WAIT);
+
     return 0;
 }
 
