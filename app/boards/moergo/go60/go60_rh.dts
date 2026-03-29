@@ -100,9 +100,8 @@
         data-ready-gpios = <&go60_ext 4 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
 
         sensitivity = "1x";
-        rotate-90;
-        y-invert;
-        no-secondary-tap;
+        swap-xy;
+        invert-y;
     };
 };
 
