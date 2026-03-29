@@ -3,7 +3,6 @@
 
 config BOARD_GO60_LH
     select SOC_NRF52840_QIAA
-    select SOC_DCDC_NRF52X
     select ZMK_BOARD_COMPAT
     imply RETAINED_MEM
     imply RETENTION

@@ -35,9 +35,6 @@ config ZMK_POINTING_SMOOTH_SCROLLING
 config ZMK_IDLE_TIMEOUT
     default 120000
 
-config BT_CTLR
-    default BT
-
 config ZMK_KSCAN_MATRIX_WAIT_BETWEEN_OUTPUTS
     default 5
 
@@ -70,6 +67,7 @@ config SPI
     default y
 
 config WS2812_STRIP
+    bool
     default y
 
 endif # ZMK_RGB_UNDERGLOW
