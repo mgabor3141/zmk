@@ -1,0 +1,46 @@
+# Copyright (c) 2020 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+description: |
+  Maps LED pixel indices to status indicator roles for the RGB underglow
+  status overlay. Activated via &rgb_ug RGB_STATUS in a keymap.
+
+compatible: "zmk,underglow-indicators"
+
+properties:
+  bat-lhs:
+    type: array
+    required: true
+    description: LED pixel indices for left-hand battery bar graph
+  bat-rhs:
+    type: array
+    required: true
+    description: LED pixel indices for right-hand battery bar graph
+  capslock:
+    type: int
+    required: true
+    description: LED pixel index for CapsLock indicator
+  numlock:
+    type: int
+    required: true
+    description: LED pixel index for NumLock indicator
+  scrolllock:
+    type: int
+    required: true
+    description: LED pixel index for ScrollLock indicator
+  layer-state:
+    type: array
+    required: true
+    description: LED pixel indices for active layer indicators
+  ble-state:
+    type: array
+    required: true
+    description: LED pixel indices for BLE profile status
+  usb-state:
+    type: int
+    required: true
+    description: LED pixel index for USB connection status
+  output-fallback:
+    type: int
+    required: true
+    description: LED pixel index shown when preferred transport is not active
