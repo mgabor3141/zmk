@@ -343,6 +343,12 @@ config ZMK_RGB_UNDERGLOW_AUTO_OFF_USB
     bool "Turn off RGB underglow when USB is disconnected"
     depends on USB_DEVICE_STACK
 
+config ZMK_RGB_UNDERGLOW_LAYER_INDICATORS
+    bool "Per-key RGB indicators for active layers"
+    help
+      Light up specific LEDs when certain layers are active.
+      Only works on the central half of split keyboards.
+
 endif # ZMK_RGB_UNDERGLOW
 
 menuconfig ZMK_BACKLIGHT
