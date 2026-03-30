@@ -7,6 +7,7 @@
 
 #include "go60.dtsi"
 #include "go60_rh-pinctrl.dtsi"
+#include <common/nordic/nrf52840_uf2_boot_mode.dtsi>
 
 #include <dt-bindings/led/led.h>
 
