@@ -347,10 +347,30 @@ struct key_indicator {
     struct led_rgb color;
 };
 
+struct layer_indicator_set {
+    uint8_t layer;
+    const struct key_indicator *indicators;
+    uint8_t count;
+};
+
 /* TODO: make configurable via DTS */
+#define BRT CONFIG_ZMK_RGB_UNDERGLOW_BRT_MAX
+#define DIM (CONFIG_ZMK_RGB_UNDERGLOW_BRT_MAX / 4)
+
 static const struct key_indicator caps_word_indicators[] = {
-    {.pixel = 2, /* LH T3 */
-     .color = {.r = CONFIG_ZMK_RGB_UNDERGLOW_BRT_MAX, .g = 0, .b = 0}},
+    {.pixel = 2, .color = {.r = BRT, .g = 0, .b = 0}},   /* LH T3 red */
+};
+
+static const struct key_indicator gaming_indicators[] = {
+    {.pixel = 13, .color = {.r = 0, .g = DIM, .b = DIM}}, /* E (C3R2) */
+    {.pixel = 19, .color = {.r = 0, .g = DIM, .b = DIM}}, /* S (C4R3) */
+    {.pixel = 14, .color = {.r = 0, .g = DIM, .b = DIM}}, /* D (C3R3) */
+    {.pixel =  9, .color = {.r = 0, .g = DIM, .b = DIM}}, /* F (C2R3) */
+};
+
+static const struct layer_indicator_set layer_indicator_sets[] = {
+    {.layer = 4, .indicators = gaming_indicators,  /* Gaming */
+     .count = ARRAY_SIZE(gaming_indicators)},
 };
 
 static bool layer_indicators_active = false;
@@ -360,6 +380,14 @@ static void zmk_rgb_underglow_apply_layer_indicators(void) {
     if (caps_word_active) {
         for (int i = 0; i < ARRAY_SIZE(caps_word_indicators); i++) {
             pixels[caps_word_indicators[i].pixel] = caps_word_indicators[i].color;
+        }
+    }
+    for (int s = 0; s < ARRAY_SIZE(layer_indicator_sets); s++) {
+        if (zmk_keymap_layer_active(layer_indicator_sets[s].layer)) {
+            for (int i = 0; i < layer_indicator_sets[s].count; i++) {
+                pixels[layer_indicator_sets[s].indicators[i].pixel] =
+                    layer_indicator_sets[s].indicators[i].color;
+            }
         }
     }
 }
@@ -831,16 +859,25 @@ static void rgb_underglow_update_indicators(bool any_active) {
     }
 }
 
-static int rgb_underglow_caps_word_listener(const zmk_event_t *eh) {
-    struct zmk_caps_word_state_changed *ev = as_zmk_caps_word_state_changed(eh);
-    if (ev) {
-        caps_word_active = ev->state;
-        rgb_underglow_update_indicators(caps_word_active);
+static bool any_indicator_active(void) {
+    if (caps_word_active) return true;
+    for (int s = 0; s < ARRAY_SIZE(layer_indicator_sets); s++) {
+        if (zmk_keymap_layer_active(layer_indicator_sets[s].layer)) return true;
     }
+    return false;
+}
+
+static int rgb_underglow_indicator_listener(const zmk_event_t *eh) {
+    struct zmk_caps_word_state_changed *cw_ev = as_zmk_caps_word_state_changed(eh);
+    if (cw_ev) {
+        caps_word_active = cw_ev->state;
+    }
+    rgb_underglow_update_indicators(any_indicator_active());
     return ZMK_EV_EVENT_BUBBLE;
 }
 
-ZMK_LISTENER(rgb_layer_ind, rgb_underglow_caps_word_listener);
+ZMK_LISTENER(rgb_layer_ind, rgb_underglow_indicator_listener);
 ZMK_SUBSCRIPTION(rgb_layer_ind, zmk_caps_word_state_changed);
+ZMK_SUBSCRIPTION(rgb_layer_ind, zmk_layer_state_changed);
 
 #endif /* CONFIG_ZMK_RGB_UNDERGLOW_LAYER_INDICATORS */
