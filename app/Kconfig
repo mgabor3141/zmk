@@ -351,6 +351,13 @@ config ZMK_RGB_UNDERGLOW_LAYER_INDICATORS
 
 endif # ZMK_RGB_UNDERGLOW
 
+config ZMK_DEFAULT_LAYER_ENDPOINT
+    bool "Per-endpoint default layer"
+    depends on SETTINGS
+    help
+      Persistently store a default layer for each endpoint (USB, BLE profiles).
+      Automatically switches layers when the active endpoint changes.
+
 menuconfig ZMK_BACKLIGHT
     bool "LED backlight"
     select LED
