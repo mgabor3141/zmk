@@ -19,6 +19,7 @@
 #include <zmk/keys.h>
 #include <zmk/hid.h>
 #include <zmk/keymap.h>
+#include <zmk/events/caps_word_state_changed.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -44,12 +45,14 @@ static void activate_caps_word(const struct device *dev) {
     struct behavior_caps_word_data *data = dev->data;
 
     data->active = true;
+    raise_caps_word_state_changed(true);
 }
 
 static void deactivate_caps_word(const struct device *dev) {
     struct behavior_caps_word_data *data = dev->data;
 
     data->active = false;
+    raise_caps_word_state_changed(false);
 }
 
 static int on_caps_word_binding_pressed(struct zmk_behavior_binding *binding,

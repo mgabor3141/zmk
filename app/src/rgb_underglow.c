@@ -26,6 +26,8 @@
 #include <zmk/hid_indicators.h>
 #include <zmk/keymap.h>
 #include <zmk/usb.h>
+#include <zmk/events/layer_state_changed.h>
+#include <zmk/events/caps_word_state_changed.h>
 
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING)
 #include <zmk/split/central.h>
@@ -337,6 +339,33 @@ int zmk_rgb_underglow_status(void) { return 0; }
 
 #endif /* HAS_INDICATORS */
 
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_LAYER_INDICATORS) && \
+    (!IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL))
+
+struct key_indicator {
+    uint8_t pixel;
+    struct led_rgb color;
+};
+
+/* TODO: make configurable via DTS */
+static const struct key_indicator caps_word_indicators[] = {
+    {.pixel = 2, /* LH T3 */
+     .color = {.r = CONFIG_ZMK_RGB_UNDERGLOW_BRT_MAX, .g = 0, .b = 0}},
+};
+
+static bool layer_indicators_active = false;
+static bool caps_word_active = false;
+
+static void zmk_rgb_underglow_apply_layer_indicators(void) {
+    if (caps_word_active) {
+        for (int i = 0; i < ARRAY_SIZE(caps_word_indicators); i++) {
+            pixels[caps_word_indicators[i].pixel] = caps_word_indicators[i].color;
+        }
+    }
+}
+
+#endif /* CONFIG_ZMK_RGB_UNDERGLOW_LAYER_INDICATORS */
+
 static void zmk_rgb_underglow_tick(struct k_work *work) {
     if (state.on) {
         switch (state.current_effect) {
@@ -357,6 +386,12 @@ static void zmk_rgb_underglow_tick(struct k_work *work) {
         /* Underglow is off; clear pixels so status blends over black */
         memset(pixels, 0, sizeof(pixels));
     }
+
+    /* Per-key layer indicators (LH/central only) */
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_LAYER_INDICATORS) && \
+    (!IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL))
+    zmk_rgb_underglow_apply_layer_indicators();
+#endif
 
     /* Blend status overlay if active */
 #if HAS_INDICATORS
@@ -387,7 +422,12 @@ static void zmk_rgb_underglow_tick(struct k_work *work) {
 K_WORK_DEFINE(underglow_tick_work, zmk_rgb_underglow_tick);
 
 static void zmk_rgb_underglow_tick_handler(struct k_timer *timer) {
-    if (!state.on) {
+    bool indicators_on = false;
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_LAYER_INDICATORS) && \
+    (!IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL))
+    indicators_on = layer_indicators_active;
+#endif
+    if (!state.on && !state.status_active && !indicators_on) {
         return;
     }
 
@@ -761,3 +801,46 @@ ZMK_SUBSCRIPTION(rgb_underglow, zmk_usb_conn_state_changed);
 #endif
 
 SYS_INIT(zmk_rgb_underglow_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_LAYER_INDICATORS) && \
+    (!IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL))
+
+static void rgb_underglow_update_indicators(bool any_active) {
+    if (any_active && !layer_indicators_active) {
+        layer_indicators_active = true;
+        if (!state.on) {
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+            if (ext_power != NULL) {
+                ext_power_enable(ext_power);
+            }
+#endif
+            k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(50));
+        }
+    } else if (!any_active && layer_indicators_active) {
+        layer_indicators_active = false;
+        if (!state.on && !state.status_active) {
+            k_timer_stop(&underglow_tick);
+            memset(pixels, 0, sizeof(pixels));
+            led_strip_update_rgb(led_strip, pixels, STRIP_NUM_PIXELS);
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+            if (ext_power != NULL) {
+                ext_power_disable(ext_power);
+            }
+#endif
+        }
+    }
+}
+
+static int rgb_underglow_caps_word_listener(const zmk_event_t *eh) {
+    struct zmk_caps_word_state_changed *ev = as_zmk_caps_word_state_changed(eh);
+    if (ev) {
+        caps_word_active = ev->state;
+        rgb_underglow_update_indicators(caps_word_active);
+    }
+    return ZMK_EV_EVENT_BUBBLE;
+}
+
+ZMK_LISTENER(rgb_layer_ind, rgb_underglow_caps_word_listener);
+ZMK_SUBSCRIPTION(rgb_layer_ind, zmk_caps_word_state_changed);
+
+#endif /* CONFIG_ZMK_RGB_UNDERGLOW_LAYER_INDICATORS */
