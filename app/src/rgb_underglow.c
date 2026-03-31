@@ -369,7 +369,7 @@ static const struct key_indicator gaming_indicators[] = {
 };
 
 static const struct layer_indicator_set layer_indicator_sets[] = {
-    {.layer = 5, .indicators = gaming_indicators,  /* Gaming */
+    {.layer = 4, .indicators = gaming_indicators,  /* Gaming */
      .count = ARRAY_SIZE(gaming_indicators)},
 };
 

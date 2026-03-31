@@ -358,6 +358,14 @@ config ZMK_DEFAULT_LAYER_ENDPOINT
       Persistently store a default layer for each endpoint (USB, BLE profiles).
       Automatically switches layers when the active endpoint changes.
 
+config ZMK_HID_REMAP
+    bool "Per-endpoint HID report remapping"
+    depends on SETTINGS
+    help
+      Remap modifier bits and key overrides in HID reports based on the
+      OS type configured for the current endpoint. Enables the &endpoint_os
+      behavior to switch between Linux and macOS modifier layouts.
+
 menuconfig ZMK_BACKLIGHT
     bool "LED backlight"
     select LED

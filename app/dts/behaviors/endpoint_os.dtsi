@@ -1,0 +1,14 @@
+/*
+ * Copyright (c) 2026 The ZMK Contributors
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+/ {
+    behaviors {
+        /omit-if-no-ref/ endpoint_os: endpoint_os {
+            compatible = "zmk,behavior-endpoint-os";
+            #binding-cells = <1>;
+        };
+    };
+};

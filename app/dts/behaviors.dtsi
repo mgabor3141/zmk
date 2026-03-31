@@ -23,6 +23,7 @@
 #include <behaviors/outputs.dtsi>
 #include <behaviors/caps_word.dtsi>
 #include <behaviors/default_layer.dtsi>
+#include <behaviors/endpoint_os.dtsi>
 #include <behaviors/key_repeat.dtsi>
 #include <behaviors/backlight.dtsi>
 #include <behaviors/macros.dtsi>

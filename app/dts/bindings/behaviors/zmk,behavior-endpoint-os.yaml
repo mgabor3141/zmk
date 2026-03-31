@@ -1,0 +1,8 @@
+# Copyright (c) 2026 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+description: Set the OS type for the current endpoint (0=Linux, 1=macOS). Persists to flash.
+
+compatible: "zmk,behavior-endpoint-os"
+
+include: one_param.yaml

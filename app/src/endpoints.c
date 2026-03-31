@@ -12,6 +12,9 @@
 #include <zmk/ble.h>
 #include <zmk/endpoints.h>
 #include <zmk/hid.h>
+#if IS_ENABLED(CONFIG_ZMK_HID_REMAP)
+#include <zmk/hid_remap.h>
+#endif
 #include <dt-bindings/zmk/hid_usage_pages.h>
 #include <zmk/usb_hid.h>
 #include <zmk/hog.h>
@@ -174,40 +177,60 @@ struct zmk_endpoint_instance zmk_endpoint_get_selected(void) { return current_in
 bool zmk_endpoint_is_connected(void) { return current_instance.transport != ZMK_TRANSPORT_NONE; }
 
 static int send_keyboard_report(void) {
+#if IS_ENABLED(CONFIG_ZMK_HID_REMAP)
+    /*
+     * Temporarily apply remapping to the live report, send it, then restore.
+     * This avoids needing access to internal USB send functions while keeping
+     * the persistent HID state clean for ZMK's modifier tracking.
+     */
+    struct zmk_hid_keyboard_report *report = zmk_hid_get_keyboard_report();
+    struct zmk_hid_keyboard_report_body saved = report->body;
+    zmk_hid_remap_apply(&report->body);
+#endif
+
+    int err;
     switch (current_instance.transport) {
     case ZMK_TRANSPORT_NONE:
-        return 0;
+        err = 0;
+        break;
 
     case ZMK_TRANSPORT_USB: {
 #if IS_ENABLED(CONFIG_ZMK_USB)
-        int err = zmk_usb_hid_send_keyboard_report();
+        err = zmk_usb_hid_send_keyboard_report();
         if (err) {
             LOG_ERR("FAILED TO SEND OVER USB: %d", err);
         }
-        return err;
 #else
         LOG_ERR("USB endpoint is not supported");
-        return -ENOTSUP;
+        err = -ENOTSUP;
 #endif /* IS_ENABLED(CONFIG_ZMK_USB) */
+        break;
     }
 
     case ZMK_TRANSPORT_BLE: {
 #if IS_ENABLED(CONFIG_ZMK_BLE)
         struct zmk_hid_keyboard_report *keyboard_report = zmk_hid_get_keyboard_report();
-        int err = zmk_hog_send_keyboard_report(&keyboard_report->body);
+        err = zmk_hog_send_keyboard_report(&keyboard_report->body);
         if (err) {
             LOG_ERR("FAILED TO SEND OVER HOG: %d", err);
         }
-        return err;
 #else
         LOG_ERR("BLE HOG endpoint is not supported");
-        return -ENOTSUP;
+        err = -ENOTSUP;
 #endif /* IS_ENABLED(CONFIG_ZMK_BLE) */
-    }
+        break;
     }
 
-    LOG_ERR("Unhandled endpoint transport %d", current_instance.transport);
-    return -ENOTSUP;
+    default:
+        LOG_ERR("Unhandled endpoint transport %d", current_instance.transport);
+        err = -ENOTSUP;
+        break;
+    }
+
+#if IS_ENABLED(CONFIG_ZMK_HID_REMAP)
+    report->body = saved;
+#endif
+    return err;
 }
 
 static int send_consumer_report(void) {
