@@ -52,9 +52,7 @@ struct key_override {
 #define K_HOME   HID_USAGE_KEY_KEYBOARD_HOME
 #define K_END    HID_USAGE_KEY_KEYBOARD_END
 #define K_F13    HID_USAGE_KEY_KEYBOARD_F13
-#define K_F21    HID_USAGE_KEY_KEYBOARD_F21
 #define K_M      HID_USAGE_KEY_KEYBOARD_M
-#define K_S      HID_USAGE_KEY_KEYBOARD_S
 
 #define HYPER (MOD_LCTL | MOD_LSFT | MOD_LALT | MOD_LGUI)
 
@@ -77,8 +75,6 @@ static const struct key_override mac_overrides[] = {
     /* F13 -> Hyper+M (for Hammerspoon mic mute) */
     {0, 0xFF, K_F13, HYPER, K_M},
 
-    /* F21 -> Hyper+S (for Hammerspoon sleep) */
-    {0, 0xFF, K_F21, HYPER, K_S},
 };
 
 /* --- Modifier bit swap --- */
