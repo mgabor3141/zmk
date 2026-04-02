@@ -59,11 +59,12 @@ struct key_override {
 #define HYPER (MOD_LCTL | MOD_LSFT | MOD_LALT | MOD_LGUI)
 
 static const struct key_override mac_overrides[] = {
-    /* Word navigation: Cmd+arrow/bspc/del -> Alt+same (but NOT with Shift) */
-    {MOD_LGUI, MOD_LSFT | MOD_RSFT, K_LEFT,  MOD_LALT, 0},
-    {MOD_LGUI, MOD_LSFT | MOD_RSFT, K_RIGHT, MOD_LALT, 0},
-    {MOD_LGUI, MOD_LSFT | MOD_RSFT, K_BSPC,  MOD_LALT, 0},
-    {MOD_LGUI, MOD_LSFT | MOD_RSFT, K_DEL,   MOD_LALT, 0},
+    /* Word navigation: Cmd+arrow/bspc/del -> Alt+same (skip if Shift or Ctrl present;
+     * Ctrl after swap means original LGUI/Super, i.e. WM layer is active) */
+    {MOD_LGUI, MOD_LSFT | MOD_RSFT | MOD_LCTL, K_LEFT,  MOD_LALT, 0},
+    {MOD_LGUI, MOD_LSFT | MOD_RSFT | MOD_LCTL, K_RIGHT, MOD_LALT, 0},
+    {MOD_LGUI, MOD_LSFT | MOD_RSFT | MOD_LCTL, K_BSPC,  MOD_LALT, 0},
+    {MOD_LGUI, MOD_LSFT | MOD_RSFT | MOD_LCTL, K_DEL,   MOD_LALT, 0},
 
     /* Tab un-swap: Cmd+Tab -> Ctrl+Tab, Ctrl+Tab -> Cmd+Tab */
     {MOD_LGUI, 0, K_TAB, MOD_LCTL, 0},
@@ -92,9 +93,9 @@ static zmk_mod_flags_t remap_mods(zmk_mod_flags_t mods) {
     if (mods & MOD_LCTL) {
         out |= MOD_LGUI;
     }
-    /* LGUI -> LCTRL */
+    /* LGUI -> LCTRL + LGUI + LALT  (Super becomes Ctrl+Cmd+Opt on macOS for WM layer) */
     if (mods & MOD_LGUI) {
-        out |= MOD_LCTL;
+        out |= MOD_LCTL | MOD_LGUI | MOD_LALT;
     }
     /* RGUI -> LCTRL */
     if (mods & MOD_RGUI) {
