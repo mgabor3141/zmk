@@ -54,6 +54,12 @@
     };
 };
 
+/* Enable DC-DC converter for stable radio power and lower consumption.
+ * Replaces deprecated SOC_DCDC_NRF52X Kconfig symbol (Zephyr 4.1+). */
+&reg1 {
+    regulator-initial-mode = <NRF5X_REG_MODE_DCDC>;
+};
+
 &adc {
     status = "okay";
 };
