@@ -361,6 +361,15 @@ static const struct key_indicator caps_word_indicators[] = {
     {.pixel = 2, .color = {.r = BRT, .g = 0, .b = 0}},   /* LH T3 red */
 };
 
+static const struct key_indicator nav_indicators[] = {
+    {.pixel = 13, .color = {.r = DIM, .g = DIM / 2, .b = 0}}, /* UP    (C3R2) */
+    {.pixel = 24, .color = {.r = DIM, .g = DIM / 2, .b = 0}}, /* HOME  (C5R3) */
+    {.pixel = 19, .color = {.r = DIM, .g = DIM / 2, .b = 0}}, /* LEFT  (C4R3) */
+    {.pixel = 14, .color = {.r = DIM, .g = DIM / 2, .b = 0}}, /* DOWN  (C3R3) */
+    {.pixel =  9, .color = {.r = DIM, .g = DIM / 2, .b = 0}}, /* RIGHT (C2R3) */
+    {.pixel =  5, .color = {.r = DIM, .g = DIM / 2, .b = 0}}, /* END   (C1R3) */
+};
+
 static const struct key_indicator gaming_indicators[] = {
     {.pixel = 13, .color = {.r = 0, .g = DIM, .b = DIM}}, /* E (C3R2) */
     {.pixel = 19, .color = {.r = 0, .g = DIM, .b = DIM}}, /* S (C4R3) */
@@ -369,6 +378,8 @@ static const struct key_indicator gaming_indicators[] = {
 };
 
 static const struct layer_indicator_set layer_indicator_sets[] = {
+    {.layer = 1, .indicators = nav_indicators,     /* Nav */
+     .count = ARRAY_SIZE(nav_indicators)},
     {.layer = 4, .indicators = gaming_indicators,  /* Gaming */
      .count = ARRAY_SIZE(gaming_indicators)},
 };
