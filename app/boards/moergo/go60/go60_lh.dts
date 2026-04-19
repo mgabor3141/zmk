@@ -31,7 +31,9 @@
     */
     underglow_indicators: underglow-indicators {
         compatible  = "zmk,underglow-indicators";
-        layer-state = <26 22 17 12 7 3>;
+        /* Layer -> pixel: Base Nav Symbol Function(none) WM Gaming Mouse.
+         * 0xFF means the layer has no status indicator (Function is momentary-only). */
+        layer-state = <26 22 17 0xFF 12 7 3>;
         bat-lhs     = <27 23 18 13 8 4>;
         bat-rhs     = <28 24 19 14 9 5>;
         capslock    = <0>;

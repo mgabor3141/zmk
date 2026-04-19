@@ -31,7 +31,10 @@ properties:
   layer-state:
     type: array
     required: true
-    description: LED pixel indices for active layer indicators
+    description: |
+      LED pixel indices for active layer indicators. Indexed by layer number:
+      entry N is the pixel to light when layer N is active. Use 0xFF to skip
+      a layer (e.g. for purely momentary layers that don't need an indicator).
   ble-state:
     type: array
     required: true

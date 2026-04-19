@@ -274,10 +274,13 @@ static int16_t zmk_led_generate_status(void) {
     if (led_flags & ZMK_LED_SCROLLLOCK_BIT)
         status_pixels[DT_PROP(UNDERGLOW_INDICATORS, scrolllock)] = ind_red;
 
-    /* Layer state */
+    /* Layer state; pixel 0xFF marks a layer that should not show a status indicator. */
     for (uint8_t i = 0; i < DT_PROP_LEN(UNDERGLOW_INDICATORS, layer_state); i++) {
+        uint8_t pixel = underglow_layer_state[i];
+        if (pixel == 0xFF)
+            continue;
         if (zmk_keymap_layer_active(i))
-            status_pixels[underglow_layer_state[i]] = ind_magenta;
+            status_pixels[pixel] = ind_magenta;
     }
 
     /* BLE profile and USB status */
@@ -380,7 +383,7 @@ static const struct key_indicator gaming_indicators[] = {
 static const struct layer_indicator_set layer_indicator_sets[] = {
     {.layer = 1, .indicators = nav_indicators,     /* Nav */
      .count = ARRAY_SIZE(nav_indicators)},
-    {.layer = 4, .indicators = gaming_indicators,  /* Gaming */
+    {.layer = 5, .indicators = gaming_indicators,  /* Gaming */
      .count = ARRAY_SIZE(gaming_indicators)},
 };
 
